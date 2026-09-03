@@ -66,7 +66,8 @@ struct Message {
     /// @note This is optional
     Tags tags;
 
-    static auto MakeMessage(const EmailAddress& to, MessageTemplate&& template, OptionalString&& subject = std::nullopt)
+    static auto
+    MakeMessage(const EmailAddress& to, MessageTemplate&& message_template, OptionalString&& subject = std::nullopt)
         -> Message;
     static auto MakeMessage(const EmailAddress& to, Subject&& subject, Text&& text) -> Message;
     static auto MakeMessage(const EmailAddress& to, Subject&& subject, Html&& html) -> Message;

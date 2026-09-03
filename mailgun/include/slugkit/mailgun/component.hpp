@@ -12,6 +12,9 @@ public:
     static constexpr std::string_view kName = "mailgun";
 
     Mailgun(const userver::components::ComponentConfig& config, const userver::components::ComponentContext& context);
+    /// @note Declared out of line because Impl is incomplete here: FastPimpl needs the destructor
+    ///       defined where the implementation is visible.
+    ~Mailgun() override;
 
     static auto GetStaticConfigSchema() -> userver::yaml_config::Schema;
 

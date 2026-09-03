@@ -3,17 +3,20 @@ project(slugkit-mailgun CXX)
 
 
 set(${PROJECT_NAME}_SRC
-    src/slugkit/mailgun/endpoints/client_mailgun.cpp
+    src/slugkit/mailgun/component.cpp
+    src/slugkit/mailgun/types.cpp
 )
 
 set(${PROJECT_NAME}_HEADERS
-    include/slugkit/geo/endpoints/client_geo.hpp
+    include/slugkit/mailgun/component.hpp
+    include/slugkit/mailgun/fwd.hpp
+    include/slugkit/mailgun/types.hpp
 )
 
 add_library(${PROJECT_NAME} STATIC ${${PROJECT_NAME}_SRC} ${${PROJECT_NAME}_HEADERS})
 
 target_include_directories(
-    ${PROJECT_NAME} 
+    ${PROJECT_NAME}
     PUBLIC
         include
 )
