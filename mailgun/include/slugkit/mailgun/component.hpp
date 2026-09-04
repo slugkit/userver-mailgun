@@ -6,6 +6,8 @@
 #include <userver/components/component_base.hpp>
 #include <userver/utils/fast_pimpl.hpp>
 
+#include <string_view>
+
 namespace slugkit::mailgun {
 
 /// @brief Sends mail through Mailgun, and verifies what Mailgun sends back.
@@ -27,6 +29,13 @@ namespace slugkit::mailgun {
 /// secdist wins where it provides a value; the static config fills in what it
 /// does not, so a deployment can keep its sending domain in plain config and
 /// its key out of one.
+///
+/// Missing credentials stop the process by default, which is right where mail
+/// is what the process is for. Where it is one channel of several, set
+/// `credentials-optional` and the component starts **inert** instead: @ref
+/// Configured is false, @ref Send throws, and the service boots and serves
+/// everything else. An environment that has not been provisioned yet should be
+/// able to run with mail switched off, not be unable to start.
 ///
 /// ### Webhooks
 ///
@@ -60,6 +69,20 @@ public:
     /// Whether a signing key was configured at all, so a service can refuse to
     /// register the endpoint rather than serve one that rejects everything.
     [[nodiscard]] auto CanVerifyWebhooks() const -> bool;
+
+    /// Whether credentials resolved at startup.
+    ///
+    /// Always true unless `credentials-optional` is set — without it the
+    /// component throws instead of constructing. With it, a caller checks this
+    /// once and reports the channel unavailable rather than calling @ref Send
+    /// and catching.
+    [[nodiscard]] auto Configured() const -> bool;
+
+    /// What is missing, when @ref Configured is false; empty otherwise.
+    ///
+    /// A sentence, safe to log: it names the setting that is absent and never
+    /// the value of one that is present.
+    [[nodiscard]] auto UnconfiguredReason() const -> std::string_view;
 
 private:
     constexpr static auto kImplSize = 232UL;
