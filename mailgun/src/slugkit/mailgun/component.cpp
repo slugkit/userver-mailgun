@@ -91,6 +91,16 @@ struct Mailgun::Impl {
             throw std::runtime_error{"mailgun: no sending domain, in secdist or in the static config"};
         }
 
+        // Required, like the domain. `from` was mandatory before secdist support
+        // made every field fall back, and losing that was a regression with a
+        // bad shape: an empty From is not refused by this component, it is
+        // refused by Mailgun, as a 400 on the first send — which reads like a
+        // malformed message rather than a missing setting, and only appears
+        // once somebody tries to send something.
+        if (from_.empty()) {
+            throw std::runtime_error{"mailgun: no From address, in secdist or in the static config"};
+        }
+
         // The messages path is appended with a leading slash, so a trailing one would double it up.
         while (!base_url_.empty() && base_url_.back() == '/') {
             base_url_.pop_back();
