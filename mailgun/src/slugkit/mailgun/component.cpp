@@ -21,6 +21,7 @@
 #include <fmt/format.h>
 
 #include <chrono>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -52,11 +53,47 @@ struct Mailgun::Impl {
     std::string webhook_signing_key_;
     std::chrono::seconds webhook_tolerance_;
     std::chrono::milliseconds timeout_;
+    /// Empty when the component is configured; otherwise what is missing.
+    std::string unconfigured_;
 
     Impl(const userver::components::ComponentConfig& config, const userver::components::ComponentContext& context)
         : http_client_(context.FindComponent<userver::components::HttpClient>())
         , webhook_tolerance_(config["webhook-tolerance"].As<std::chrono::seconds>(std::chrono::minutes{15}))
         , timeout_(config["timeout"].As<std::chrono::milliseconds>(std::chrono::milliseconds{30000})) {
+        auto missing = Configure(config, context);
+        if (!missing.has_value()) {
+            return;
+        }
+
+        if (!config["credentials-optional"].As<bool>(false)) {
+            throw std::runtime_error{fmt::format("mailgun: {}", *missing)};
+        }
+
+        // Inert rather than fatal, because the deployment asked for that. A
+        // process is more than its mail: refusing to start because one provider
+        // has not been provisioned yet takes down everything else in the binary,
+        // and where mail is one channel of several the honest degradation is a
+        // channel that reports itself unavailable.
+        //
+        // Loudly, though — at error level, once, naming what is missing. Silent
+        // inertness is the worse failure of the two: a deployment that looks
+        // healthy and quietly sends nothing.
+        unconfigured_ = std::move(*missing);
+        LOG_ERROR() << "mailgun: inert — " << unconfigured_
+                    << ". The component started because credentials-optional is set; every send will be refused "
+                       "until it is configured.";
+    }
+
+    /// Resolves credentials from secdist, then from the static config.
+    ///
+    /// @returns nothing when the component is configured, and otherwise the
+    ///          first thing found missing, phrased for a log line or an
+    ///          exception message. Never a value: a message that named the key
+    ///          it found would be the key in a log.
+    auto Configure(
+        const userver::components::ComponentConfig& config,
+        const userver::components::ComponentContext& context
+    ) -> std::optional<std::string> {
         // secdist first, static config behind it. A deployment may keep its
         // sending domain in plain config and its key out of one, so this is a
         // per-field fallback rather than a choice between two sources.
@@ -70,9 +107,9 @@ struct Mailgun::Impl {
             secrets = context.FindComponent<userver::components::Secdist>().Get().Get<Secrets>();
             secret = secrets.Find(secdist_key);
             if (secret == nullptr) {
-                throw std::runtime_error{fmt::format(
-                    "mailgun: secdist-key '{}' is configured, but the secdist document has no such block", secdist_key
-                )};
+                return fmt::format(
+                    "secdist-key '{}' is configured, but the secdist document has no such block", secdist_key
+                );
             }
         }
 
@@ -88,7 +125,17 @@ struct Mailgun::Impl {
             from_secdist(secret != nullptr ? secret->from : std::nullopt).value_or(config["from"].As<std::string>(""));
 
         if (domain_.empty()) {
-            throw std::runtime_error{"mailgun: no sending domain, in secdist or in the static config"};
+            return "no sending domain, in secdist or in the static config";
+        }
+
+        // Required, like the domain. `from` was mandatory before secdist support
+        // made every field fall back, and losing that was a regression with a
+        // bad shape: an empty From is not refused by this component, it is
+        // refused by Mailgun, as a 400 on the first send — which reads like a
+        // malformed message rather than a missing setting, and only appears
+        // once somebody tries to send something.
+        if (from_.empty()) {
+            return "no From address, in secdist or in the static config";
         }
 
         // The messages path is appended with a leading slash, so a trailing one would double it up.
@@ -98,7 +145,7 @@ struct Mailgun::Impl {
 
         const auto api_key = secret != nullptr ? secret->api_key : config["api-key"].As<std::string>("");
         if (api_key.empty()) {
-            throw std::runtime_error{"mailgun: no api key, in secdist or in the static config"};
+            return "no api key, in secdist or in the static config";
         }
         authn_ =
             fmt::format("Basic {}", userver::crypto::base64::Base64Encode(fmt::format("api:{}", api_key)));
@@ -108,6 +155,7 @@ struct Mailgun::Impl {
         // would make provisioning harder for no gain.
         webhook_signing_key_ = secret != nullptr ? secret->webhook_signing_key.value_or("")
                                                  : config["webhook-signing-key"].As<std::string>("");
+        return std::nullopt;
     }
 
     void SendForm(userver::clients::http::Form&& form) const {
@@ -126,6 +174,12 @@ struct Mailgun::Impl {
     }
 
     void Send(const Message& message) const {
+        if (!unconfigured_.empty()) {
+            // A caller that checks Configured() never reaches this. One that
+            // does not gets an exception rather than a silent drop, because a
+            // message nobody was told about is worse than one that failed.
+            throw std::runtime_error{fmt::format("mailgun: not configured — {}", unconfigured_)};
+        }
         if (message.to.empty()) {
             throw std::runtime_error("Mailgun message must have at least one recipient");
         }
@@ -197,6 +251,14 @@ auto Mailgun::CanVerifyWebhooks() const -> bool {
     return !impl_->webhook_signing_key_.empty();
 }
 
+auto Mailgun::Configured() const -> bool {
+    return impl_->unconfigured_.empty();
+}
+
+auto Mailgun::UnconfiguredReason() const -> std::string_view {
+    return impl_->unconfigured_;
+}
+
 auto Mailgun::GetStaticConfigSchema() -> userver::yaml_config::Schema {
     return userver::yaml_config::MergeSchemas<userver::components::ComponentBase>(R"(
 type: object
@@ -207,6 +269,17 @@ properties:
         type: string
         description: Base URL for the Mailgun API
         defaultDescription: https://api.mailgun.net/v3
+    credentials-optional:
+        type: boolean
+        description: >-
+            Whether the component may start without resolvable credentials.
+            When it may, an absent secdist block — or a missing domain, From
+            address or api key — leaves the component *inert* instead of
+            stopping the process: Configured() is false, UnconfiguredReason()
+            says what is missing, and Send throws. For a service where mail is
+            one channel of several, that is the honest degradation; leave it
+            false where mail is the point of the process.
+        defaultDescription: false, meaning missing credentials stop the process
     secdist-key:
         type: string
         description: >-
