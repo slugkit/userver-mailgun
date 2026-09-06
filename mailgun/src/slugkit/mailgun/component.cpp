@@ -195,6 +195,14 @@ struct Mailgun::Impl {
         if (!message.bcc.empty()) {
             form.AddContent("bcc", JoinAddresses(message.bcc));
         }
+        // Optional, and only when it says something. Mailgun has no field for
+        // this, so it goes as a header override; an empty one would be a
+        // `Reply-To:` that mail clients render and that sends the reply
+        // nowhere, which is worse than omitting the header.
+        const auto& reply_to = message.reply_to.GetUnderlying();
+        if (reply_to.has_value() && !reply_to->GetUnderlying().empty()) {
+            form.AddContent("h:Reply-To", reply_to->GetUnderlying());
+        }
         // A template can carry its own subject, so an empty one is not an error here.
         if (!message.subject.empty()) {
             form.AddContent("subject", message.subject);
