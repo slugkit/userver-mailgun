@@ -45,6 +45,15 @@ struct Message {
     /// @note This is optional
     EmailList bcc;
 
+    /// @brief Where replies to this message should go
+    /// @note This is optional, and omitted when unset — Mailgun has no
+    ///       first-class field for it, so it travels as the `h:Reply-To`
+    ///       header override. An empty address is treated as unset rather
+    ///       than sent: a `Reply-To:` with nothing in it is rendered by mail
+    ///       clients and sends the reply nowhere, which is worse than having
+    ///       no header at all.
+    OptionalEmailAddress reply_to;
+
     /// @brief Subject of the email
     /// @note This is required unless the template provides has a subject
     /// configured
