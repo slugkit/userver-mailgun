@@ -27,6 +27,22 @@ struct MessageTemplate {
     OptionalString version;
 };
 
+/// @brief One file attached to a message.
+/// @note Travels as an `attachment` multipart part of the messages call; the
+///       bytes are held by value because the form the client builds keeps
+///       its own copy and the message may outlive the caller's buffer.
+struct Attachment {
+    /// @brief The name the recipient's client shows and saves under.
+    std::string filename;
+    /// @brief The part's media type, e.g. `image/jpeg`. Empty lets the
+    ///        client fall back to `application/octet-stream`.
+    std::string content_type;
+    /// @brief The file, verbatim.
+    std::string data;
+};
+
+using Attachments = std::vector<Attachment>;
+
 /// @brief Mailgun message
 /// A subset of the Mailgun message API
 /// New features are added as they are needed
@@ -74,6 +90,12 @@ struct Message {
     /// @brief Tags to add to the email
     /// @note This is optional
     Tags tags;
+
+    /// @brief Files attached to the email
+    /// @note This is optional. Each one is an `attachment` multipart part;
+    ///       Mailgun's size ceiling for the whole message (25 MB) is the
+    ///       provider's to enforce, not this client's.
+    Attachments attachments;
 
     static auto
     MakeMessage(const EmailAddress& to, MessageTemplate&& message_template, OptionalString&& subject = std::nullopt)
