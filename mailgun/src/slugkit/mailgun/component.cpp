@@ -21,6 +21,7 @@
 #include <fmt/format.h>
 
 #include <chrono>
+#include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -227,6 +228,18 @@ struct Mailgun::Impl {
         }
         for (const auto& tag : message.tags) {
             form.AddContent("o:tag", tag);
+        }
+        // One `attachment` part per file, the way Mailgun's messages API takes
+        // them. The form copies the buffer it is handed, so a shared_ptr over a
+        // fresh string is what the client asks for rather than a view into the
+        // caller's message.
+        for (const auto& attachment : message.attachments) {
+            auto buffer = std::make_shared<std::string>(attachment.data);
+            if (attachment.content_type.empty()) {
+                form.AddBuffer("attachment", attachment.filename, buffer);
+            } else {
+                form.AddBuffer("attachment", attachment.filename, buffer, attachment.content_type);
+            }
         }
 
         SendForm(std::move(form));
