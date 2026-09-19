@@ -9,6 +9,8 @@ set(CMAKE_C_COMPILER "/usr/bin/clang")
 
 project(userver-mailgun VERSION 0.1.0 LANGUAGES CXX)
 
+option(USERVER_MAILGUN_BUILD_TESTS "Build tests" OFF)
+
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")

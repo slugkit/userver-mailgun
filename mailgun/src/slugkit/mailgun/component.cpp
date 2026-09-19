@@ -7,6 +7,7 @@
 #include <userver/clients/http/form.hpp>
 #include <userver/components/component_config.hpp>
 #include <userver/components/component_context.hpp>
+#include <userver/components/statistics_storage.hpp>
 #include <userver/crypto/base64.hpp>
 #include <userver/storages/secdist/component.hpp>
 #include <userver/storages/secdist/secdist.hpp>
@@ -159,14 +160,25 @@ struct Mailgun::Impl {
         return std::nullopt;
     }
 
-    void SendForm(userver::clients::http::Form&& form) const {
+    void SendForm(userver::clients::http::Form&& form, Metrics& metrics) const {
         auto url = fmt::format("{}/{}/messages", base_url_, domain_);
-        auto response = http_client_.GetHttpClient()
-                            .CreateRequest()
-                            .post(url, std::move(form))
-                            .timeout(timeout_)
-                            .headers({{"Authorization", authn_}, {"Content-Type", "multipart/form-data"}})
-                            .perform();
+        const auto started = std::chrono::steady_clock::now();
+        std::shared_ptr<userver::clients::http::Response> response;
+        try {
+            response = http_client_.GetHttpClient()
+                           .CreateRequest()
+                           .post(url, std::move(form))
+                           .timeout(timeout_)
+                           .headers({{"Authorization", authn_}, {"Content-Type", "multipart/form-data"}})
+                           .perform();
+        } catch (const std::exception&) {
+            metrics.AccountSend(SendOutcome::kTransportError);
+            throw;
+        }
+        metrics.AccountSendDuration(
+            std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started)
+        );
+        metrics.AccountSend(SendOutcomeForStatus(static_cast<int>(response->status_code())));
         if (response->status_code() / 100 != 2) {
             LOG_ERROR() << fmt::format("Failed to send email: {}", response->status_code());
             throw std::runtime_error(fmt::format("Failed to send email: {}", response->status_code()));
@@ -174,14 +186,16 @@ struct Mailgun::Impl {
         LOG_INFO() << "Email sent, response: " << response->body();
     }
 
-    void Send(const Message& message) const {
+    void Send(const Message& message, Metrics& metrics) const {
         if (!unconfigured_.empty()) {
+            metrics.AccountSend(SendOutcome::kUnconfigured);
             // A caller that checks Configured() never reaches this. One that
             // does not gets an exception rather than a silent drop, because a
             // message nobody was told about is worse than one that failed.
             throw std::runtime_error{fmt::format("mailgun: not configured — {}", unconfigured_)};
         }
         if (message.to.empty()) {
+            metrics.AccountSend(SendOutcome::kInvalid);
             throw std::runtime_error("Mailgun message must have at least one recipient");
         }
 
@@ -242,7 +256,7 @@ struct Mailgun::Impl {
             }
         }
 
-        SendForm(std::move(form));
+        SendForm(std::move(form), metrics);
     }
 };
 
@@ -252,20 +266,32 @@ Mailgun::Mailgun(
 )
     : ComponentBase{config, context}
     , impl_{config, context} {
+    metrics_.SetConfigured(Configured());
+    statistics_holder_ = context.FindComponent<userver::components::StatisticsStorage>().GetStorage().RegisterWriter(
+        config["metrics-prefix"].As<std::string>("mailgun"),
+        [this](userver::utils::statistics::Writer& writer) { writer = metrics_; }
+    );
 }
 
-Mailgun::~Mailgun() = default;
+Mailgun::~Mailgun() { statistics_holder_.Unregister(); }
 
 void Mailgun::Send(EmailAddress&& to, Subject&& subject, Text&& text) const {
-    impl_->Send(Message::MakeMessage(to, std::move(subject), std::move(text)));
+    impl_->Send(Message::MakeMessage(to, std::move(subject), std::move(text)), metrics_);
 }
 
 void Mailgun::Send(const Message& message) const {
-    impl_->Send(message);
+    impl_->Send(message, metrics_);
 }
 
 auto Mailgun::VerifyWebhook(const WebhookSignature& signature) const -> bool {
-    return slugkit::mailgun::VerifySignature(signature, impl_->webhook_signing_key_, impl_->webhook_tolerance_);
+    if (impl_->webhook_signing_key_.empty()) {
+        metrics_.AccountVerification(VerifyOutcome::kUnconfigured);
+        return false;
+    }
+    const auto verified =
+        slugkit::mailgun::VerifySignature(signature, impl_->webhook_signing_key_, impl_->webhook_tolerance_);
+    metrics_.AccountVerification(verified ? VerifyOutcome::kOk : VerifyOutcome::kRefused);
+    return verified;
 }
 
 auto Mailgun::CanVerifyWebhooks() const -> bool {
@@ -334,6 +360,12 @@ properties:
         type: string
         description: Timeout for a single Mailgun API request
         defaultDescription: 30s
+    metrics-prefix:
+        type: string
+        description: >-
+            Where the send and verification counters are written in the
+            statistics storage (slugkit/mailgun/metrics.hpp)
+        defaultDescription: mailgun
     )");
 }
 

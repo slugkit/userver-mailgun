@@ -1,10 +1,12 @@
 #pragma once
 
+#include <slugkit/mailgun/metrics.hpp>
 #include <slugkit/mailgun/types.hpp>
 #include <slugkit/mailgun/webhook.hpp>
 
 #include <userver/components/component_base.hpp>
 #include <userver/utils/fast_pimpl.hpp>
+#include <userver/utils/statistics/entry.hpp>
 
 #include <string_view>
 
@@ -44,6 +46,12 @@ namespace slugkit::mailgun {
 /// signature and freshness — because the scheme is Mailgun's knowledge and a
 /// service that had learnt it would have to be edited when Mailgun changes it.
 /// Parsing is @ref ParseEvent, which is free-standing: it needs no credentials.
+///
+/// ### Metrics
+///
+/// Sends by outcome, their latency, webhook verifications by outcome and
+/// whether the component is configured, under `metrics-prefix`
+/// (slugkit/mailgun/metrics.hpp has the catalogue).
 class Mailgun : public userver::components::ComponentBase {
 public:
     static constexpr std::string_view kName = "mailgun";
@@ -89,6 +97,12 @@ private:
     constexpr static auto kImplAlign = 8UL;
     struct Impl;
     userver::utils::FastPimpl<Impl, kImplSize, kImplAlign> impl_;
+
+    /// Mutable because sending and verifying are const — the component is
+    /// not changed by either — and counting them is bookkeeping about the call.
+    mutable Metrics metrics_;
+    /// Last, so it is torn down first: the writer reads `metrics_`.
+    userver::utils::statistics::Entry statistics_holder_;
 };
 
 }  // namespace slugkit::mailgun
