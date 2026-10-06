@@ -146,10 +146,12 @@ auto ParseEvent(const userver::formats::json::Value& body) -> Event {
     }
 
     // Mailgun sends a float — seconds with a fractional part — so this goes
-    // through a double rather than an integer parse.
-    const auto timestamp = data["timestamp"].As<double>(0.0);
+    // through a double rather than an integer parse. `duration<double>` is what
+    // carries the unit: the conversion to milliseconds is the cast, and no
+    // thousand is written anywhere.
+    const std::chrono::duration<double> timestamp{data["timestamp"].As<double>(0.0)};
     event.occurred_at = std::chrono::system_clock::time_point{
-        std::chrono::milliseconds{static_cast<std::int64_t>(timestamp * 1000)}
+        std::chrono::duration_cast<std::chrono::milliseconds>(timestamp)
     };
 
     if (event.raw_event == "failed") {

@@ -28,6 +28,7 @@
 #include <cstdint>
 #include <string_view>
 
+#include <userver/server/http/http_status.hpp>
 #include <userver/utils/statistics/histogram.hpp>
 #include <userver/utils/statistics/rate_counter.hpp>
 #include <userver/utils/statistics/writer.hpp>
@@ -60,6 +61,17 @@ enum class VerifyOutcome {
 };
 
 /// The send outcome of an HTTP status Mailgun answered with.
+/// Whether a status is in the 2xx class.
+///
+/// One predicate because two places ask it — the send path and the outcome
+/// mapping — and `status / 100 == 2` written twice is two spellings of one
+/// rule. `kMultipleChoices` (300) is the first status that is not a success,
+/// so it bounds the class without being in it.
+[[nodiscard]] constexpr auto IsSuccess(int status) noexcept -> bool {
+    return status >= userver::server::http::HttpStatus::kOk
+        && status < userver::server::http::HttpStatus::kMultipleChoices;
+}
+
 [[nodiscard]] auto SendOutcomeForStatus(int status) noexcept -> SendOutcome;
 
 [[nodiscard]] auto MetricLabel(SendOutcome outcome) noexcept -> std::string_view;
