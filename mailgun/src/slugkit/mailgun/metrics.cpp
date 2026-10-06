@@ -24,8 +24,10 @@ auto Index(Enum outcome) noexcept -> std::size_t {
 }  // namespace
 
 auto SendOutcomeForStatus(int status) noexcept -> SendOutcome {
-    if (status / 100 == 2) return SendOutcome::kAccepted;
-    if (status >= 500) return SendOutcome::kServerError;
+    if (IsSuccess(status)) return SendOutcome::kAccepted;
+    if (status >= userver::server::http::HttpStatus::kInternalServerError) {
+        return SendOutcome::kServerError;
+    }
     return SendOutcome::kRejected;
 }
 

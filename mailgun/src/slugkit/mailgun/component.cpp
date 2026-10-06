@@ -1,5 +1,6 @@
 #include <slugkit/mailgun/component.hpp>
 
+#include <slugkit/mailgun/metrics.hpp>
 #include <slugkit/mailgun/secrets.hpp>
 
 #include <userver/clients/http/client.hpp>
@@ -32,6 +33,15 @@ namespace slugkit::mailgun {
 
 namespace {
 
+/// How far a webhook timestamp may be from now before the signature is refused.
+/// Generous because it bounds clock skew and delivery delay together, not an
+/// attacker's window — the signature itself is what rejects a forgery.
+constexpr std::chrono::minutes kWebhookToleranceDefault{15};
+
+/// How long one send may take. An attachment is the slow case; the duration
+/// histogram's top bucket is this value, which is how it was chosen.
+constexpr std::chrono::seconds kTimeoutDefault{30};
+
 /// @brief Mailgun takes multiple recipients as one comma-separated field value.
 auto JoinAddresses(const EmailList& addresses) -> std::string {
     std::string result;
@@ -60,8 +70,8 @@ struct Mailgun::Impl {
 
     Impl(const userver::components::ComponentConfig& config, const userver::components::ComponentContext& context)
         : http_client_(context.FindComponent<userver::components::HttpClient>())
-        , webhook_tolerance_(config["webhook-tolerance"].As<std::chrono::seconds>(std::chrono::minutes{15}))
-        , timeout_(config["timeout"].As<std::chrono::milliseconds>(std::chrono::milliseconds{30000})) {
+        , webhook_tolerance_(config["webhook-tolerance"].As<std::chrono::seconds>(kWebhookToleranceDefault))
+        , timeout_(config["timeout"].As<std::chrono::milliseconds>(kTimeoutDefault)) {
         auto missing = Configure(config, context);
         if (!missing.has_value()) {
             return;
@@ -179,7 +189,7 @@ struct Mailgun::Impl {
             std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started)
         );
         metrics.AccountSend(SendOutcomeForStatus(static_cast<int>(response->status_code())));
-        if (response->status_code() / 100 != 2) {
+        if (!IsSuccess(static_cast<int>(response->status_code()))) {
             LOG_ERROR() << fmt::format("Failed to send email: {}", response->status_code());
             throw std::runtime_error(fmt::format("Failed to send email: {}", response->status_code()));
         }
