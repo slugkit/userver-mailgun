@@ -277,13 +277,20 @@ Mailgun::Mailgun(
     : ComponentBase{config, context}
     , impl_{config, context} {
     metrics_.SetConfigured(Configured());
-    statistics_holder_ = context.FindComponent<userver::components::StatisticsStorage>().GetStorage().RegisterWriter(
+    // Scoped, so the writer is unregistered before the destructor starts and
+    // so before `metrics_`, which it reads, goes. That ordering was what the
+    // replaced `Entry` member was declared last to get; it is a property of
+    // the registration now rather than of the declaration order.
+    userver::utils::statistics::RegisterWriterScope(
+        context,
         config["metrics-prefix"].As<std::string>("mailgun"),
         [this](userver::utils::statistics::Writer& writer) { writer = metrics_; }
     );
 }
 
-Mailgun::~Mailgun() { statistics_holder_.Unregister(); }
+// Still out of line for FastPimpl's sake; there is no longer anything to
+// unregister by hand.
+Mailgun::~Mailgun() = default;
 
 void Mailgun::Send(EmailAddress&& to, Subject&& subject, Text&& text) const {
     impl_->Send(Message::MakeMessage(to, std::move(subject), std::move(text)), metrics_);

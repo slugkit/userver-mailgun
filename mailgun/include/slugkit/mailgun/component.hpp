@@ -6,7 +6,6 @@
 
 #include <userver/components/component_base.hpp>
 #include <userver/utils/fast_pimpl.hpp>
-#include <userver/utils/statistics/entry.hpp>
 
 #include <string_view>
 
@@ -100,9 +99,6 @@ private:
 
     /// Mutable because sending and verifying are const — the component is
     /// not changed by either — and counting them is bookkeeping about the call.
-    mutable Metrics metrics_;
-    /// Last, so it is torn down first: the writer reads `metrics_`.
-    userver::utils::statistics::Entry statistics_holder_;
-};
+    mutable Metrics metrics_;};
 
 }  // namespace slugkit::mailgun
